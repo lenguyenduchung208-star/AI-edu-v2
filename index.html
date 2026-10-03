@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>EduViz AI – Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#f3f6f4;--card:#fff;--ink:#1c2b2d;--mut:#5f7073;--pri:#0f766e;--line:#d9e2df;--ok:#15803d;--bad:#b91c1c}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1719;--card:#162124;--ink:#e6efed;--mut:#9bb0b3;--line:#27383b;--pri:#2dd4bf}}
+*{box-sizing:border-box}
+body{margin:0;font:16px/1.6 "Be Vietnam Pro",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+header{padding:22px 24px;background:var(--card);border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:22px}header p{margin:2px 0 0;color:var(--mut);font-size:14px}
+main{max-width:1000px;margin:0 auto;padding:20px}
+section.box{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin-bottom:16px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px;margin-bottom:12px}
+label{display:block;font-size:13px;color:var(--mut);margin-bottom:4px}
+input{width:100%;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink);font:inherit}
+button{font:inherit;cursor:pointer}
+button:focus-visible,input:focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+.btn{padding:10px 16px;border-radius:6px;border:1px solid var(--pri);background:var(--pri);color:#fff;font-weight:500}
+@media(prefers-color-scheme:dark){.btn{color:#04201c}}
+.btn.alt{background:transparent;color:var(--pri)}
+#st{margin:10px 0 0;font-size:14px;color:var(--mut)}#st.err{color:var(--bad)}
+.note{font-size:13px;color:var(--mut);margin-top:10px}
+.tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+.tab{padding:8px 14px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--ink)}
+.tab.on{background:var(--pri);border-color:var(--pri);color:#fff}
+@media(prefers-color-scheme:dark){.tab.on{color:#04201c}}
+#map{overflow-x:auto;padding-bottom:6px}
+.q{padding:14px 0;border-bottom:1px solid var(--line)}.q:last-of-type{border:0}
+.opt{display:block;width:100%;text-align:left;margin-top:8px;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+.opt:hover:not(:disabled){border-color:var(--pri)}
+.opt.ok{background:#dcfce7;border-color:var(--ok);color:#14532d}
+.opt.bad{background:#fee2e2;border-color:var(--bad);color:#7f1d1d}
+.ex{margin-top:8px;color:var(--mut);font-size:14px}
+.pill{display:inline-block;padding:3px 10px;border-radius:999px;margin:0 6px 6px 0;font-size:14px}
+.pill.ok{background:#dcfce7;color:#14532d}.pill.warn{background:#fef3c7;color:#78350f}.pill.bad{background:#fee2e2;color:#7f1d1d}
+.hide{display:none}
+</style>
+</head>
+<body>
+<header>
+  <h1>EduViz AI</h1>
+  <p>Giáo viên tải tài liệu lên, học sinh nhận sơ đồ tư duy và bài trắc nghiệm.</p>
+</header>
+<main>
+  <section class="box">
+    <div class="row">
+      <div><label for="file">Tài liệu (PDF, ảnh, .txt, .md)</label><input id="file" type="file" accept=".pdf,.txt,.md,image/*"></div>
+      <div><label for="n">Số câu trắc nghiệm</label><input id="n" type="number" min="3" max="10" value="5"></div>
+    </div>
+    <div class="row">
+      <div><label for="key">Anthropic API key</label><input id="key" type="password" placeholder="sk-ant-..." autocomplete="off"></div>
+      <div><label for="model">Model</label><input id="model" value="claude-sonnet-5-5"></div>
+    </div>
+    <button class="btn" id="go">Tạo bằng AI</button>
+    <button class="btn alt" id="demo">Chạy demo (không cần API key)</button>
+    <p id="st"></p>
+    <p class="note">Demo gọi API trực tiếp từ trình duyệt, chỉ dùng key thử nghiệm. Bản chính thức phải gọi qua backend để không lộ key.</p>
+  </section>
+
+  <section class="box hide" id="out">
+    <h2 id="ttl" style="margin-top:0"></h2>
+    <div class="tabs">
+      <button class="tab on" data-t="p-sum">Tóm tắt</button>
+      <button class="tab" data-t="p-map">Sơ đồ tư duy</button>
+      <button class="tab" data-t="p-quiz">Làm trắc nghiệm</button>
+    </div>
+    <div id="p-sum"></div>
+    <div id="p-map" class="hide"><div id="map"></div></div>
+    <div id="p-quiz" class="hide"><div id="quiz"></div></div>
+  </section>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const setStatus=(t,err)=>{$('st').textContent=t;$('st').className=err?'err':''};
+
+/* Dữ liệu mẫu để chạy thử không cần API */
+const DEMO={title:"Quang hợp ở thực vật",
+summary:"Quang hợp là quá trình cây xanh dùng ánh sáng để biến CO₂ và nước thành glucose, đồng thời thải ra O₂. Quá trình diễn ra trong lục lạp, gồm pha sáng và pha tối.",
+mindmap:{name:"Quang hợp",children:[
+ {name:"Nguyên liệu",children:[{name:"CO₂"},{name:"Nước"},{name:"Ánh sáng"}]},
+ {name:"Sản phẩm",children:[{name:"Glucose"},{name:"O₂"}]},
+ {name:"Nơi diễn ra",children:[{name:"Lục lạp"},{name:"Chất diệp lục"}]},
+ {name:"Hai pha",children:[{name:"Pha sáng"},{name:"Pha tối (Calvin)"}]}]},
+questions:[
+ {q:"Khí nào được thải ra trong quang hợp?",options:["CO₂","O₂","N₂","H₂"],answer:1,explanation:"Nước bị phân li ở pha sáng và giải phóng O₂.",concept:"Sản phẩm"},
+ {q:"Nguyên liệu nào sau đây KHÔNG dùng cho quang hợp?",options:["Nước","CO₂","Ánh sáng","Glucose"],answer:3,explanation:"Glucose là sản phẩm, không phải nguyên liệu.",concept:"Nguyên liệu"},
+ {q:"Quang hợp diễn ra chủ yếu ở bào quan nào?",options:["Ti thể","Lục lạp","Nhân","Ribosome"],answer:1,explanation:"Lục lạp chứa chất diệp lục hấp thụ ánh sáng.",concept:"Nơi diễn ra"},
+ {q:"Chu trình Calvin thuộc pha nào?",options:["Pha sáng","Pha tối","Hô hấp","Phân bào"],answer:1,explanation:"Chu trình Calvin cố định CO₂ thành đường ở pha tối.",concept:"Hai pha"}]};
+
+/* Đọc file → "part" gửi cho Claude */
+async function filePart(f){
+  if(f.type==='application/pdf'||f.type.startsWith('image/')){
+    const b64=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result.split(',')[1]);r.onerror=no;r.readAsDataURL(f)});
+    return f.type==='application/pdf'
+      ?{type:'document',source:{type:'base64',media_type:'application/pdf',data:b64}}
+      :{type:'image',source:{type:'base64',media_type:f.type,data:b64}};
+  }
+  return {type:'text',text:await f.text()};
+}
+
+const SYS='Bạn là trợ lý giáo dục. Đọc tài liệu của giáo viên và CHỈ trả về JSON hợp lệ (không markdown, không giải thích) theo mẫu: {"title":str,"summary":str,"mindmap":{"name":str,"children":[{"name":str,"children":[...]}]},"questions":[{"q":str,"options":[4 chuỗi],"answer":0-3,"explanation":str,"concept":str}]}. Mind map tối đa 3 cấp, mỗi nhánh tối đa 5 nút con, tên nút ngắn gọn. Câu hỏi bám sát tài liệu, 4 đáp án, đúng 1 đáp án; "concept" phải trùng tên một nút cấp 1 của mind map. Viết bằng tiếng Việt.';
+
+async function generate(){
+  const key=$('key').value.trim(),f=$('file').files[0];
+  if(!f) return setStatus('Hãy chọn một tài liệu.',1);
+  if(/\.(docx?|pptx?)$/i.test(f.name)) return setStatus('Demo chưa đọc Word/PowerPoint. Hãy xuất ra PDF rồi tải lên.',1);
+  if(!key) return setStatus('Nhập API key, hoặc bấm "Chạy demo".',1);
+  setStatus('Đang gửi tài liệu cho AI, chờ khoảng 10–30 giây...');
+  try{
+    const part=await filePart(f);
+    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',
+      headers:{'content-type':'application/json','x-api-key':key,'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:$('model').value.trim(),max_tokens:4096,system:SYS,
+        messages:[{role:'user',content:[part,{type:'text',text:`Tạo mind map và ${+$('n').value||5} câu trắc nghiệm từ tài liệu này.`}]}]})});
+    const data=await res.json();
+    if(!res.ok) throw new Error(data.error?.message||('HTTP '+res.status));
+    const txt=data.content.map(c=>c.text||'').join('').replace(/```json|```/g,'').trim();
+    render(JSON.parse(txt));
+  }catch(e){setStatus('Lỗi: '+e.message,1)}
+}
+
+function render(d){
+  setStatus('');
+  $('ttl').textContent=d.title;
+  $('p-sum').innerHTML=`<p>${esc(d.summary)}</p>`;
+  drawMap(d.mindmap);
+  QS=d.questions;ans=[];drawQuiz();
+  $('out').classList.remove('hide');
+  tab('p-sum');
+}
+
+/* Mind map: bố cục cây từ trái sang phải, vẽ bằng SVG */
+function drawMap(root){
+  const NW=150,NH=34,GX=56,GY=12,C=['#0f766e','#b45309','#2563eb','#be185d','#7c3aed'];
+  let y=0;const nodes=[],links=[];
+  (function lay(n,d,b){n.d=d;n.b=b;
+    if(!n.children||!n.children.length){n.y=y;y+=NH+GY}
+    else{n.children.forEach((c,i)=>{lay(c,d+1,d===0?i:b);links.push([n,c])});n.y=(n.children[0].y+n.children[n.children.length-1].y)/2}
+    nodes.push(n)})(root,0,0);
+  const depth=Math.max(...nodes.map(n=>n.d)),W=(depth+1)*(NW+GX)-GX+4,H=y+4;
+  const x=n=>n.d*(NW+GX)+2,col=n=>n.d===0?'var(--pri)':C[n.b%C.length];
+  const cut=s=>s.length>20?s.slice(0,19)+'…':s;
+  const p=links.map(([a,c])=>{const x1=x(a)+NW,y1=a.y+NH/2+2,x2=x(c),y2=c.y+NH/2+2;
+    return `<path d="M${x1} ${y1}C${x1+GX/2} ${y1} ${x2-GX/2} ${y2} ${x2} ${y2}" fill="none" stroke="${col(c)}" stroke-width="2"/>`}).join('');
+  const r=nodes.map(n=>{const solid=n.d<=1;
+    return `<g><title>${esc(n.name)}</title><rect x="${x(n)}" y="${n.y+2}" width="${NW}" height="${NH}" rx="6" style="fill:${solid?col(n):'var(--card)'}" stroke="${col(n)}" stroke-width="2"/>
+    <text x="${x(n)+NW/2}" y="${n.y+2+NH/2+5}" text-anchor="middle" font-size="13" font-weight="${solid?700:500}" style="fill:${solid?'#fff':'var(--ink)'}">${esc(cut(n.name))}</text></g>`}).join('');
+  $('map').innerHTML=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" role="img" aria-label="Sơ đồ tư duy">${p}${r}</svg>`;
+}
+
+/* Trắc nghiệm + phân tích điểm yếu theo khái niệm */
+let QS=[],ans=[];
+function drawQuiz(){
+  $('quiz').innerHTML=QS.map((q,i)=>`<div class="q"><b>${i+1}. ${esc(q.q)}</b>`+
+    q.options.map((o,j)=>`<button class="opt" data-i="${i}" data-j="${j}">${'ABCD'[j]}. ${esc(o)}</button>`).join('')+
+    `<div class="ex" id="ex${i}"></div></div>`).join('')+'<div id="res"></div>';
+}
+$('quiz').onclick=e=>{
+  const b=e.target.closest('.opt');if(!b)return;
+  const i=+b.dataset.i,j=+b.dataset.j,q=QS[i];if(ans[i]!=null)return;
+  ans[i]=j;
+  b.parentElement.querySelectorAll('.opt').forEach((x,k)=>{x.disabled=true;if(k===q.answer)x.classList.add('ok');else if(k===j)x.classList.add('bad')});
+  $('ex'+i).textContent=(j===q.answer?'Đúng. ':'Chưa đúng. ')+q.explanation;
+  if(QS.every((_,k)=>ans[k]!=null))report();
+};
+function report(){
+  const m={};
+  QS.forEach((q,i)=>{const c=q.concept||'Khác';m[c]=m[c]||[0,0];m[c][1]++;if(ans[i]===q.answer)m[c][0]++});
+  const score=QS.filter((q,i)=>ans[i]===q.answer).length;
+  const lv=r=>r>=.8?['Mạnh','ok']:r>=.5?['Trung bình','warn']:['Yếu','bad'];
+  const weak=Object.keys(m).filter(k=>m[k][0]/m[k][1]<.5);
+  $('res').innerHTML=`<h3>Kết quả: ${score}/${QS.length}</h3>`+
+    Object.keys(m).map(k=>{const l=lv(m[k][0]/m[k][1]);return `<span class="pill ${l[1]}">${esc(k)}: ${l[0]}</span>`}).join('')+
+    `<p>${weak.length?'Nên học lại: <b>'+weak.map(esc).join(', ')+'</b>. Xem nhánh này trong sơ đồ tư duy.':'Bạn đã nắm vững các khái niệm trong bài.'}</p>`;
+}
+
+/* Tab + nút */
+function tab(id){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.toggle('on',t.dataset.t===id));
+  ['p-sum','p-map','p-quiz'].forEach(p=>$(p).classList.toggle('hide',p!==id));
+}
+document.querySelectorAll('.tab').forEach(t=>t.onclick=()=>tab(t.dataset.t));
+$('go').onclick=generate;
+$('demo').onclick=()=>render(JSON.parse(JSON.stringify(DEMO)));
+</script>
+</body>
+</html>
